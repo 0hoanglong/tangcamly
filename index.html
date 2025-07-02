@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#00000000">
+    <title>tangcamly</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            
+        }
+        . {
+            color: #00000000;
+        }
+    </style>
+
+    <script type="importmap">
+         {
+        "imports": {
+          "three": "https://unpkg.com/three@0.148.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.148.0/examples/jsm/"
+        }}
+    </script>
+</head>
+
+<body>
+    <!-- Nhạc tự động phát -->
+    <audio id="bgMusic" autoplay loop>
+        <source src="songs/eyenoselip.mp3" type="audio/mpeg" />
+    </audio>
+
+    <script type="module">
+        import * as THREE from "three";
+        import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(
+            50,
+            window.innerWidth / window.innerHeight,
+            0.1,
+            1000
+        );
+        camera.position.set(0, -20, 130);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 50;      // Giới hạn không nhìn quá gần
+        controls.maxDistance = 200;     // Giới hạn không nhìn quá xa
+        controls.minPolarAngle = Math.PI / 4;     // Giới hạn không nhìn quá thấp (45° từ trên xuống)
+        controls.maxPolarAngle = Math.PI * 0.75;  // Giới hạn không nhìn quá cao (135° từ dưới lên)
+        controls.minAzimuthAngle = -Math.PI / 0;  // Giới hạn xoay trái tối đa: -45°
+        controls.maxAzimuthAngle = Math.PI / 0;   // Giới hạn xoay phải tối đa: +45°
+
+        // Ánh sáng nền mềm mại
+        const ambientLight = new THREE.AmbientLight(0xffaaff, 0.3);
+        scene.add(ambientLight);
+
+        // Ánh sáng hướng tạo chiều sâu
+        const directionalLight = new THREE.DirectionalLight(0xff77cc, 1);
+        directionalLight.position.set(50, 100, 50);
+        scene.add(directionalLight);
+
+        // Background gradient shader
+    //     const vertexShader = `
+    //     varying vec2 vUv;
+    //     void main() {
+    //       vUv = uv;
+    //       gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+    //     }
+    //   `;
+    //     const fragmentShader = `
+    //     varying vec2 vUv;
+    //     void main() {
+    //       vec3 topColor = vec3(0.1, 0.0, 0.2);
+    //       vec3 bottomColor = vec3(0.05, 0.0, 0.1);
+    //       vec3 color = mix(bottomColor, topColor, vUv.y);
+    //       gl_FragColor = vec4(color, 100.0);
+    //     }
+    //   `;
+    //     const bgMaterial = new THREE.ShaderMaterial({
+    //         vertexShader,
+    //         fragmentShader,
+    //         side: THREE.DoubleSide,
+    //         depthWrite: false,
+    //     });
+    //     const bgPlane = new THREE.Mesh(
+    //         new THREE.PlaneGeometry(500, 500),
+    //         bgMaterial
+    //     );
+    //     bgPlane.position.z = -100;
+    //     scene.add(bgPlane);
+
+        // Sao trời với shader nhấp nháy mềm mại
+        const starCount = 5000;
+        const starPositions = new Float32Array(starCount * 3);
+        const starOpacities = new Float32Array(starCount);
+        // Phân bố sao đều khắp không gian (x: -200→200, y: -200→200, z: -200→200)
+        for (let i = 0; i < starCount; i++) {
+            starPositions[i * 3] = (Math.random() - 0.5) * 400;        // x
+            starPositions[i * 3 + 1] = (Math.random() - 0.5) * 400;    // y (đã sửa)
+            starPositions[i * 3 + 2] = (Math.random() - 0.5) * 400;    // z
+            starOpacities[i] = Math.random();
+        }
+
+
+        const starGeometry = new THREE.BufferGeometry();
+        starGeometry.setAttribute(
+            "position",
+            new THREE.BufferAttribute(starPositions, 3)
+        );
+        starGeometry.setAttribute(
+            "opacity",
+            new THREE.BufferAttribute(starOpacities, 1)
+        );
+
+        const starVertexShader = `
+        attribute float opacity;
+        varying float vOpacity;
+        void main() {
+          vOpacity = opacity;
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          gl_PointSize = 2.0 * (300.0 / -mvPosition.z);
+          gl_Position = projectionMatrix * mvPosition;
+        }
+      `;
+        const starFragmentShader = `
+        varying float vOpacity;
+        uniform float time;
+        void main() {
+          float alpha = 0.5 + 0.5 * sin(time + vOpacity * 6.2831);
+          vec2 coords = gl_PointCoord - vec2(0.5);
+          float dist = length(coords);
+          if (dist > 0.5) discard;
+          gl_FragColor = vec4(1.0, 1.0, 1.0, alpha * (1.0 - dist * 2.0));
+        }
+      `;
+        const starUniforms = {
+            time: { value: 0 },
+        };
+        const starMaterial = new THREE.ShaderMaterial({
+            vertexShader: starVertexShader,
+            fragmentShader: starFragmentShader,
+            transparent: true,
+            uniforms: starUniforms,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+        });
+        const stars = new THREE.Points(starGeometry, starMaterial);
+        scene.add(stars);
+
+        // Glow material cho sprite
+        function createGlowMaterial(texture) {
+            return new THREE.SpriteMaterial({
+                map: texture,
+                transparent: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+            });
+        }
+
+        // Tạo sprite chữ có glow
+        function createTextSprite(text) {
+            const scaleFactor = 4;
+            const fontSize = 25 * scaleFactor;
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+            ctx.font = `${fontSize}px sans-serif`;
+            const textWidth = ctx.measureText(text).width;
+            canvas.width = textWidth + 25 * scaleFactor;
+            canvas.height = fontSize + 25 * scaleFactor;
+            ctx.font = `${fontSize}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+
+            ctx.shadowColor = "rgba(255, 160, 180, 0.7)";
+            ctx.shadowBlur = 20;
+            ctx.fillStyle = "#e5f0f0";
+            ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            const material = createGlowMaterial(texture);
+            const sprite = new THREE.Sprite(material);
+            sprite.scale.set(
+                canvas.width / (10 * scaleFactor),
+                canvas.height / (10 * scaleFactor),
+                1
+            );
+            sprite.position.set(
+                (Math.random() - 0.5) * 100,
+                Math.random() * 60 + 30,
+                (Math.random() - 0.5) * 20
+            );
+            sprite.rotation.z = THREE.MathUtils.degToRad(15);
+            return sprite;
+        }
+
+        const texts = [
+            "Anh nhớ nhiều em",
+            "Mãi bên nhau em nhé",
+            "Luôn hạnh phúc",
+            "Tình yêu này chỉ dành cho em",
+            "Trái tim này chỉ có mình em thôi",
+            "Mỗi ngày bên em là 1 món quà",
+            "Em là tất cả của anh",
+            "Yêu em nhất trên đời",
+            "Cảm ơn em đã đến bên anh",
+            "Thế giới của anh là em",
+        ];
+        const textSprites = texts.map((t) => {
+            const s = createTextSprite(t);
+            scene.add(s);
+            return s;
+        });
+
+        // Tạo texture trái tim
+        function createHeartTexture(emoji) {
+            const size = 64;
+            const canvas = document.createElement("canvas");
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext("2d");
+            // Sử dụng font hệ thống hỗ trợ emoji tốt hơn
+            ctx.font = "48px 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.shadowColor = "rgba(255, 105, 180, 0.5)";
+            ctx.shadowBlur = 15;
+            ctx.fillStyle = "rgba(255, 0, 85, 0.9)";
+            ctx.fillText(emoji, size / 2, size / 2 + 2); // Điều chỉnh vị trí Y một chút cho cân đối
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        const heartEmojis = ["❤️", "💕", "💓", "💗", "💖", "💝"];
+        const heartTextures = heartEmojis.map(createHeartTexture);
+
+        const hearts = [];
+        for (let i = 0; i < 50; i++) {
+            const randomTexture = heartTextures[Math.floor(Math.random() * heartTextures.length)];
+            const h = new THREE.Sprite(createGlowMaterial(randomTexture));
+            h.scale.set(2.5, 2.5, 1);
+            h.position.set(
+                (Math.random() - 0.5) * 100,
+                Math.random() * 60 + 30,
+                (Math.random() - 0.5) * 20
+            );
+            scene.add(h);
+            hearts.push(h);
+        }
+
+        // Hàm "CSS-in-JS" để tạo ảnh tròn có viền hồng
+        function createStyledImageTexture(image) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // Tạo canvas vuông dựa trên kích thước lớn nhất của ảnh
+            const size = Math.max(image.width, image.height);
+
+            // Thêm khoảng đệm để hiệu ứng glow có không gian hiển thị
+            const padding = size * 0.15; // 15% padding
+            canvas.width = size + padding * 2;
+            canvas.height = size + padding * 2;
+
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+
+            // Tọa độ và kích thước của vùng ảnh bên trong canvas
+            const rectX = centerX - image.width / 2;
+            const rectY = centerY - image.height / 2;
+            const rectWidth = image.width;
+            const rectHeight = image.height;
+            // Đây là giá trị bo góc, tương đương "border-radius".
+            // Bạn có thể thay đổi số 25 để bo góc nhiều hơn hoặc ít hơn.
+            const borderRadius = 25;
+
+            // Bắt đầu vẽ hình chữ nhật bo góc
+            ctx.beginPath();
+            ctx.moveTo(rectX + borderRadius, rectY);
+            ctx.lineTo(rectX + rectWidth - borderRadius, rectY);
+            ctx.quadraticCurveTo(rectX + rectWidth, rectY, rectX + rectWidth, rectY + borderRadius);
+            ctx.lineTo(rectX + rectWidth, rectY + rectHeight - borderRadius);
+            ctx.quadraticCurveTo(rectX + rectWidth, rectY + rectHeight, rectX + rectWidth - borderRadius, rectY + rectHeight);
+            ctx.lineTo(rectX + borderRadius, rectY + rectHeight);
+            ctx.quadraticCurveTo(rectX, rectY + rectHeight, rectX, rectY + rectHeight - borderRadius);
+            ctx.lineTo(rectX, rectY + borderRadius);
+            ctx.quadraticCurveTo(rectX, rectY, rectX + borderRadius, rectY);
+            ctx.closePath();
+
+            // 1. Vẽ viền hồng phát sáng (giống trái tim)
+            ctx.shadowColor = "rgba(255, 105, 180, 0.7)";
+            ctx.shadowBlur = 30;
+            ctx.strokeStyle = "rgba(255, 105, 180, 0.9)";
+            ctx.lineWidth = size * 0.05; // Độ dày viền bằng 5% kích thước ảnh
+            ctx.stroke();
+
+            // Tắt hiệu ứng shadow để không ảnh hưởng đến ảnh gốc
+            ctx.shadowColor = 'transparent';
+
+            // 2. Tạo vùng cắt (clip) theo hình đã vẽ để làm bo góc
+            ctx.clip();
+
+            // 3. Vẽ ảnh vào bên trong vùng đã cắt
+            ctx.drawImage(image, rectX, rectY);
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        // Thêm các URL hình ảnh của bạn vào đây
+        const imageUrls = [
+            "image/a01.jpeg",
+            "image/a02.jpg",
+            "image/a03.jpg",
+            "image/a04.jpg",
+        ];
+        const textureLoader = new THREE.TextureLoader();
+        const imageSprites = [];
+        const imageDatas = []; // Lưu trữ texture và tỷ lệ khung hình
+
+        // Hàm tạo sprite ảnh với tỷ lệ khung hình chính xác
+        function createImageSprite(texture, aspectRatio) {
+            const imageMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
+            const sprite = new THREE.Sprite(imageMaterial);
+            
+            const spriteHeight = 10; // Đặt chiều cao cố định cho ảnh
+            const spriteWidth = spriteHeight * aspectRatio; // Tính chiều rộng dựa trên tỷ lệ
+            sprite.scale.set(spriteWidth, spriteHeight, 1);
+            
+            return sprite;
+        }
+
+        // Hàm tạo các sprite ảnh ban đầu
+        function createInitialImageSprites() {
+            if (imageDatas.length === 0) return;
+            for (let i = 0; i < 5; i++) {
+                const randomData = imageDatas[Math.floor(Math.random() * imageDatas.length)];
+                const sprite = createImageSprite(randomData.texture, randomData.aspectRatio);
+                sprite.position.set(
+                    (Math.random() - 0.5) * 100,
+                    Math.random() * 60 + 30,
+                    (Math.random() - 0.5) * 20
+                );
+                scene.add(sprite);
+                imageSprites.push(sprite);
+            }
+        }
+
+        // Tải trước tất cả ảnh. Khi tất cả đã tải xong, mới tạo các ảnh ban đầu.
+        let loadedImageCount = 0;
+        imageUrls.forEach(url => textureLoader.load(url, (loadedTexture) => {
+            const styledTexture = createStyledImageTexture(loadedTexture.image);
+            // Vì canvas giờ là hình vuông, tỷ lệ khung hình luôn là 1
+            imageDatas.push({ texture: styledTexture, aspectRatio: 1 });
+            loadedImageCount++;
+            if (loadedImageCount === imageUrls.length) {
+                createInitialImageSprites();
+            }
+        }));
+
+        window.addEventListener("click", () => {
+            const rand = Math.random();
+            // Tỉ lệ: 45% trái tim, 45% chữ, 10% hình ảnh
+            if (rand < 0.45) { // Thả trái tim
+                const randomTexture = heartTextures[Math.floor(Math.random() * heartTextures.length)];
+                const h = new THREE.Sprite(createGlowMaterial(randomTexture));
+                h.scale.set(2.5, 2.5, 1);
+                h.position.set(
+                    (Math.random() - 0.5) * 100,
+                    50,
+                    (Math.random() - 0.5) * 20
+                );
+                scene.add(h);
+                hearts.push(h);
+            } else if (rand < 0.90) { // Thả chữ
+                const randomText = texts[Math.floor(Math.random() * texts.length)];
+                const s = createTextSprite(randomText);
+                scene.add(s);
+                textSprites.push(s);
+            } else { // Thả hình ảnh
+                if (imageDatas.length === 0) return; // Bỏ qua nếu ảnh chưa tải xong
+
+                const randomData = imageDatas[Math.floor(Math.random() * imageDatas.length)];
+                const s = createImageSprite(randomData.texture, randomData.aspectRatio);
+
+                s.position.set(
+                    (Math.random() - 0.5) * 100,
+                    50,
+                    (Math.random() - 0.5) * 20
+                );
+                scene.add(s);
+                imageSprites.push(s);
+            }
+        });
+
+        function animate(time = 0) {
+            requestAnimationFrame(animate);
+            controls.update();
+            starUniforms.time.value = time / 1000;
+
+            // Chữ rơi
+            textSprites.forEach((s) => {
+                s.position.y -= 0.25;
+                if (s.position.y < -30) {
+                    s.position.y = 60;
+                    s.position.x = (Math.random() - 0.5) * 100;
+                }
+            });
+
+            // Trái tim rơi
+            hearts.forEach((h) => {
+                h.position.y -= 0.2;
+                if (h.position.y < -20) {
+                    h.position.y = Math.random() * 40 + 20;
+                    h.position.x = (Math.random() - 0.5) * 100;
+                }
+            });
+
+            // Hình ảnh rơi
+            imageSprites.forEach((s) => {
+                s.position.y -= 0.15; // Tốc độ rơi chậm hơn một chút
+                if (s.position.y < -30) {
+                    s.position.y = 60;
+                    s.position.x = (Math.random() - 0.5) * 100;
+                }
+            });
+
+            renderer.render(scene, camera);
+        }
+
+
+
+        animate();
+
+        // Xử lý nhạc tự động phát (vấn đề trình duyệt)
+        const bgMusic = document.getElementById("bgMusic");
+        bgMusic.volume = 0.5;
+        bgMusic.play().catch(() => {
+            console.log("Trình duyệt chặn autoplay. Đợi tương tác...");
+            const unlock = () => {
+                bgMusic.play();
+                window.removeEventListener("click", unlock);
+                window.removeEventListener("touchstart", unlock);
+            };
+            window.addEventListener("click", unlock);
+            window.addEventListener("touchstart", unlock);
+        });
+
+        window.addEventListener("resize", () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+</body>
+
+</html>
